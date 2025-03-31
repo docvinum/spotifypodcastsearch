@@ -18,12 +18,13 @@ console = Console()
 
 
 # 🎯 Filtres personnalisés
-def filter_shows(shows, title_include, title_exclude, desc_include, desc_exclude, lang_filter):
+def filter_shows(shows, title_include, title_exclude, desc_include, desc_exclude, lang_filter, min_episodes, max_episodes):
     filtered = []
     for show in shows:
         title = show['name'].lower()
         description = show['description'].lower()
         languages = [lang.lower() for lang in show.get("languages", [])]
+        total_eps = show.get('total_episodes', 0)
 
         if title_include and not any(kw in title for kw in title_include):
             continue
@@ -35,13 +36,17 @@ def filter_shows(shows, title_include, title_exclude, desc_include, desc_exclude
             continue
         if lang_filter and not any(lang in languages for lang in lang_filter):
             continue
+        if min_episodes is not None and total_eps < min_episodes:
+            continue
+        if max_episodes is not None and total_eps > max_episodes:
+            continue
 
         filtered.append(show)
     return filtered
 
 
 # 🔎 Recherche avec pagination
-def search_podcast(query, title_include, title_exclude, desc_include, desc_exclude, lang_filter, pages=1):
+def search_podcast(query, title_include, title_exclude, desc_include, desc_exclude, lang_filter, min_episodes, max_episodes, pages=1):
     all_shows = []
     query = query if query.strip() else "a"
 
@@ -57,7 +62,11 @@ def search_podcast(query, title_include, title_exclude, desc_include, desc_exclu
             console.print(f"[red]Erreur lors de la pagination : {e}[/red]")
             break
 
-    filtered_shows = filter_shows(all_shows, title_include, title_exclude, desc_include, desc_exclude, lang_filter)
+    filtered_shows = filter_shows(
+        all_shows, title_include, title_exclude,
+        desc_include, desc_exclude,
+        lang_filter, min_episodes, max_episodes
+    )
 
     if not filtered_shows:
         console.print("[yellow]Aucun podcast ne correspond aux filtres.[/yellow]")
@@ -111,8 +120,10 @@ def main():
     parser.add_argument("--desc-include", nargs='*', help="Mots-clés obligatoires dans la description")
     parser.add_argument("--desc-exclude", nargs='*', help="Mots-clés interdits dans la description")
     parser.add_argument("--lang", nargs='*', help="Langue(s) ISO des podcasts (ex: fr, en)")
+    parser.add_argument("--min-episodes", type=int, help="Nombre minimum d'épisodes du podcast")
+    parser.add_argument("--max-episodes", type=int, help="Nombre maximum d'épisodes du podcast")
     parser.add_argument("--episodes", action="store_true", help="Afficher les épisodes des podcasts")
-    parser.add_argument("--max-episodes", type=int, default=5, help="Nombre max d'épisodes à afficher")
+    parser.add_argument("--max-episodes-to-show", type=int, default=5, help="Nombre max d'épisodes à afficher")
     parser.add_argument("--pages", type=int, default=1, help="Nombre de pages à explorer (50 résultats max par page)")
 
     args = parser.parse_args()
@@ -132,11 +143,13 @@ def main():
         desc_include=desc_include,
         desc_exclude=desc_exclude,
         lang_filter=lang_filter,
+        min_episodes=args.min_episodes,
+        max_episodes=args.max_episodes,
         pages=args.pages
     )
 
     if shows:
-        display_podcast_and_episodes(shows, max_episodes=args.max_episodes if args.episodes else 0)
+        display_podcast_and_episodes(shows, max_episodes=args.max_episodes_to_show if args.episodes else 0)
 
 
 if __name__ == "__main__":
