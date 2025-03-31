@@ -7,7 +7,6 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-# 🔐 Auth Spotify
 load_dotenv()
 client_id = os.getenv('SPOTIFY_CLIENT_ID')
 client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
@@ -17,67 +16,58 @@ sp = spotipy.Spotify(auth_manager=auth_manager)
 console = Console()
 
 
-# 🎯 Filtres personnalisés
-def filter_shows(shows, title_include, title_exclude, desc_include, desc_exclude, lang_filter, min_episodes, max_episodes):
+def format_query(search_terms):
+    if not search_terms:
+        return "a"
+    # Transforme ["natural", "wine"] → "natural" AND "wine"
+    return " AND ".join([f'"{term}"' if " " in term else term for term in search_terms])
+
+
+def filter_shows(shows, title_include, title_exclude, desc_include, desc_exclude, lang_filter,
+                 min_episodes, max_episodes, debug=False):
     filtered = []
     for show in shows:
+        reasons = []
         title = show['name'].lower()
         description = show['description'].lower()
         languages = [lang.lower() for lang in show.get("languages", [])]
         total_eps = show.get('total_episodes', 0)
 
         if title_include and not any(kw in title for kw in title_include):
-            continue
+            reasons.append("🔸 titre ne contient pas les mots-clés requis")
         if title_exclude and any(kw in title for kw in title_exclude):
-            continue
+            reasons.append("🔸 titre contient un mot-clé exclu")
         if desc_include and not any(kw in description for kw in desc_include):
-            continue
+            reasons.append("🔸 description ne contient pas les mots-clés requis")
         if desc_exclude and any(kw in description for kw in desc_exclude):
-            continue
+            reasons.append("🔸 description contient un mot-clé exclu")
         if lang_filter and not any(lang in languages for lang in lang_filter):
-            continue
+            reasons.append(f"🔸 langues {languages} non compatibles avec {lang_filter}")
         if min_episodes is not None and total_eps < min_episodes:
-            continue
+            reasons.append(f"🔸 {total_eps} épisode(s) < {min_episodes}")
         if max_episodes is not None and total_eps > max_episodes:
+            reasons.append(f"🔸 {total_eps} épisode(s) > {max_episodes}")
+
+        if reasons:
+            if debug:
+                console.print(f"[dim]❌ Podcast ignoré : {show['name']}\n  " + "\n  ".join(reasons) + "\n[/dim]")
             continue
 
         filtered.append(show)
     return filtered
 
 
-# 🔎 Recherche avec pagination
-def search_podcast(query, title_include, title_exclude, desc_include, desc_exclude, lang_filter, min_episodes, max_episodes, pages=1):
-    all_shows = []
-    query = query if query.strip() else "a"
-
-    for page in range(pages):
-        offset = page * 50
-        try:
-            results = sp.search(q=query, type='show', limit=50, offset=offset)
-            shows = results['shows']['items']
-            if not shows:
-                break
-            all_shows.extend(shows)
-        except Exception as e:
-            console.print(f"[red]Erreur lors de la pagination : {e}[/red]")
-            break
-
-    filtered_shows = filter_shows(
-        all_shows, title_include, title_exclude,
-        desc_include, desc_exclude,
-        lang_filter, min_episodes, max_episodes
-    )
-
-    if not filtered_shows:
-        console.print("[yellow]Aucun podcast ne correspond aux filtres.[/yellow]")
-
-    return filtered_shows
+def fetch_shows(query, offset, market):
+    try:
+        results = sp.search(q=query, type='show', limit=50, offset=offset, market=market)
+        return results['shows']['items']
+    except Exception as e:
+        console.print(f"[red]Erreur Spotify API : {e}[/red]")
+        return []
 
 
-# 📻 Affichage des podcasts + épisodes
 def display_podcast_and_episodes(shows, max_episodes=5):
     for show in shows:
-        # 🎙️ Affichage du podcast
         description = show['description'][:200] + "..."
         panel = Panel.fit(
             f"[bold yellow]{show['name']}[/bold yellow]\n"
@@ -92,7 +82,6 @@ def display_podcast_and_episodes(shows, max_episodes=5):
         console.print(panel)
 
         if max_episodes > 0:
-            # 📻 Affichage des épisodes
             console.rule(f"📻 Episodes de : {show['name']}")
             try:
                 episodes = sp.show_episodes(show['id'], limit=max_episodes)
@@ -111,45 +100,68 @@ def display_podcast_and_episodes(shows, max_episodes=5):
                 console.print(f"[red]Erreur lors de la récupération des épisodes : {e}[/red]")
 
 
-# 🚀 CLI principale
+def prompt_continue():
+    response = input("\nSouhaitez-vous charger les 50 podcasts suivants ? (O/N) : ").strip().lower()
+    return response in ["o", "oui", "y", "yes"]
+
+
 def main():
-    parser = argparse.ArgumentParser(description="🎧 Spotify Podcast Explorer CLI")
-    parser.add_argument("--search", help="Mot-clé global (optionnel)")
-    parser.add_argument("--title-include", nargs='*', help="Mots-clés obligatoires dans le titre")
-    parser.add_argument("--title-exclude", nargs='*', help="Mots-clés interdits dans le titre")
-    parser.add_argument("--desc-include", nargs='*', help="Mots-clés obligatoires dans la description")
-    parser.add_argument("--desc-exclude", nargs='*', help="Mots-clés interdits dans la description")
+    parser = argparse.ArgumentParser(
+        description="🎧 Spotify Podcast Explorer CLI – Recherche avancée de podcasts",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    search_group = parser.add_mutually_exclusive_group()
+    search_group.add_argument("--search", nargs='+', help="Mot(s)-clé(s) à combiner automatiquement avec AND (ex: vin bourgogne)")
+    search_group.add_argument("--raw-query", help="Requête Spotify personnalisée (ex: 'wine NOT whisky')")
+
+    parser.add_argument("--market", help="Code pays ISO (ex: FR, US, DE)", default=None)
+    parser.add_argument("--title-include", nargs='*', help="Mots-clés à inclure dans le titre")
+    parser.add_argument("--title-exclude", nargs='*', help="Mots-clés à exclure du titre")
+    parser.add_argument("--desc-include", nargs='*', help="Mots-clés à inclure dans la description")
+    parser.add_argument("--desc-exclude", nargs='*', help="Mots-clés à exclure de la description")
     parser.add_argument("--lang", nargs='*', help="Langue(s) ISO des podcasts (ex: fr, en)")
-    parser.add_argument("--min-episodes", type=int, help="Nombre minimum d'épisodes du podcast")
-    parser.add_argument("--max-episodes", type=int, help="Nombre maximum d'épisodes du podcast")
+    parser.add_argument("--min-episodes", type=int, help="Nombre minimum d'épisodes")
+    parser.add_argument("--max-episodes", type=int, help="Nombre maximum d'épisodes")
     parser.add_argument("--episodes", action="store_true", help="Afficher les épisodes des podcasts")
     parser.add_argument("--max-episodes-to-show", type=int, default=5, help="Nombre max d'épisodes à afficher")
-    parser.add_argument("--pages", type=int, default=1, help="Nombre de pages à explorer (50 résultats max par page)")
+    parser.add_argument("--debug", action="store_true", help="Afficher les raisons de rejet des podcasts")
 
     args = parser.parse_args()
 
-    query = args.search if args.search else ""
-
+    query = args.raw_query if args.raw_query else format_query(args.search)
+    lang_filter = [lang.lower() for lang in args.lang] if args.lang else []
     title_include = [kw.lower() for kw in args.title_include] if args.title_include else []
     title_exclude = [kw.lower() for kw in args.title_exclude] if args.title_exclude else []
     desc_include = [kw.lower() for kw in args.desc_include] if args.desc_include else []
     desc_exclude = [kw.lower() for kw in args.desc_exclude] if args.desc_exclude else []
-    lang_filter = [lang.lower() for lang in args.lang] if args.lang else []
 
-    shows = search_podcast(
-        query=query,
-        title_include=title_include,
-        title_exclude=title_exclude,
-        desc_include=desc_include,
-        desc_exclude=desc_exclude,
-        lang_filter=lang_filter,
-        min_episodes=args.min_episodes,
-        max_episodes=args.max_episodes,
-        pages=args.pages
-    )
+    offset = 0
+    while True:
+        shows = fetch_shows(query, offset, args.market)
+        if not shows:
+            break
 
-    if shows:
-        display_podcast_and_episodes(shows, max_episodes=args.max_episodes_to_show if args.episodes else 0)
+        filtered = filter_shows(
+            shows,
+            title_include, title_exclude,
+            desc_include, desc_exclude,
+            lang_filter,
+            args.min_episodes, args.max_episodes,
+            debug=args.debug
+        )
+
+        if filtered:
+            display_podcast_and_episodes(
+                filtered,
+                max_episodes=args.max_episodes_to_show if args.episodes else 0
+            )
+        else:
+            console.print("[yellow]Aucun podcast ne correspond aux filtres sur cette page.[/yellow]")
+
+        offset += 50
+        if not prompt_continue():
+            break
 
 
 if __name__ == "__main__":
