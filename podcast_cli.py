@@ -44,6 +44,7 @@ def filter_shows(shows, title_include, title_exclude, desc_include, desc_exclude
 
 
 def search_podcast(query, title_include, title_exclude, desc_include, desc_exclude, limit=10):
+    query = query if query.strip() else "a"  # Forcer un résultat large si rien n'est précisé
     results = sp.search(q=query, type='show', limit=limit)
     shows = results['shows']['items']
     if not shows:
@@ -86,7 +87,7 @@ def list_episodes_for_shows(shows, max_episodes=5):
 
 def main():
     parser = argparse.ArgumentParser(description="🎧 Spotify Podcast Explorer CLI")
-    parser.add_argument("search", help="Mot-clé principal pour la recherche globale (dans Spotify)")
+    parser.add_argument("--search", help="Mot-clé principal pour la recherche globale (optionnel)")
     
     # Nouveaux arguments : filtres par champ
     parser.add_argument("--title-include", nargs='*', help="Mots-clés à inclure dans le titre")
@@ -109,7 +110,7 @@ def main():
 
     # Recherche et affichage des podcasts
     shows = search_podcast(
-        query=args.search,
+        query = args.search if args.search else "",
         title_include=title_include,
         title_exclude=title_exclude,
         desc_include=desc_include,
@@ -119,7 +120,31 @@ def main():
 
     # Affichage des épisodes si demandé
     if args.episodes and shows:
-        list_episodes_for_shows(shows, max_episodes=args.max_episodes)
+        for show in shows:
+            # Afficher le podcast
+            description = show['description'][:200] + "..."
+            panel = Panel.fit(
+                f"[bold yellow]{show['name']}[/bold yellow]\n"
+                f"[green]Publisher:[/green] {show['publisher']}\n"
+                f"[cyan]Episodes:[/cyan] {show['total_episodes']}\n\n"
+                f"{description}\n\n"
+                f"[blue]{show['external_urls']['spotify']}[/blue]",
+                title=f"🎙️ Podcast",
+                border_style="magenta"
+            )
+            console.print(panel)
+
+            # Puis ses épisodes
+            console.rule(f"📻 Episodes de : {show['name']}")
+            episodes = sp.show_episodes(show['id'], limit=args.max_episodes)
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("Titre", style="bold", width=60)
+            table.add_column("Date", style="dim")
+
+            for ep in episodes['items']:
+                table.add_row(ep['name'], ep['release_date'])
+
+            console.print(table)
 
 if __name__ == "__main__":
     main()
