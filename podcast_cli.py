@@ -102,11 +102,9 @@ def display_podcast_and_episodes(shows, max_episodes=5):
             except Exception as e:
                 console.print(f"[red]Erreur lors de la récupération des épisodes : {e}[/red]")
 
-
 def prompt_continue():
-    response = input("\nSouhaitez-vous charger les 50 podcasts suivants ? (O/N) : ").strip().lower()
-    return response in ["o", "oui", "y", "yes"]
-
+    response = input("\nSouhaitez-vous charger les 50 podcasts suivants ? (O/N) [O] : ").strip().lower()
+    return response in ["", "o", "oui", "y", "yes"]
 
 def main():
     parser = argparse.ArgumentParser(
