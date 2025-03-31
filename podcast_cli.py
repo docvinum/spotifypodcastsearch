@@ -1,3 +1,7 @@
+### podcast_cli.py ###
+# Rechercher les podcasts contenant "vin", incluant "bourgogne" ou "terroir", mais excluant "whisky"
+# python podcast_cli.py vin --include bourgogne terroir --exclude whisky --episodes
+
 import os
 import argparse
 from dotenv import load_dotenv
@@ -17,32 +21,36 @@ sp = spotipy.Spotify(auth_manager=auth_manager)
 console = Console()
 
 
-def filter_shows(shows, include_keywords, exclude_keywords):
+def filter_shows(shows, title_include, title_exclude, desc_include, desc_exclude):
     filtered = []
     for show in shows:
-        text = (show['name'] + " " + show['description']).lower()
+        title = show['name'].lower()
+        description = show['description'].lower()
 
-        # Inclusion : au moins un mot-clé doit apparaître
-        if include_keywords and not any(kw in text for kw in include_keywords):
+        # Filtres sur le titre
+        if title_include and not any(kw in title for kw in title_include):
+            continue
+        if title_exclude and any(kw in title for kw in title_exclude):
             continue
 
-        # Exclusion : aucun mot-clé ne doit apparaître
-        if exclude_keywords and any(kw in text for kw in exclude_keywords):
+        # Filtres sur la description
+        if desc_include and not any(kw in description for kw in desc_include):
+            continue
+        if desc_exclude and any(kw in description for kw in desc_exclude):
             continue
 
         filtered.append(show)
-
     return filtered
 
 
-def search_podcast(query, include=None, exclude=None, limit=10):
+def search_podcast(query, title_include, title_exclude, desc_include, desc_exclude, limit=10):
     results = sp.search(q=query, type='show', limit=limit)
     shows = results['shows']['items']
     if not shows:
         console.print("[red]Aucun résultat trouvé.[/red]")
         return []
 
-    filtered_shows = filter_shows(shows, include, exclude)
+    filtered_shows = filter_shows(shows, title_include, title_exclude, desc_include, desc_exclude)
 
     if not filtered_shows:
         console.print("[yellow]Aucun podcast ne correspond aux filtres.[/yellow]")
@@ -63,7 +71,6 @@ def search_podcast(query, include=None, exclude=None, limit=10):
 
     return filtered_shows
 
-
 def list_episodes_for_shows(shows, max_episodes=5):
     for show in shows:
         console.rule(f"📻 Episodes de : {show['name']}")
@@ -77,26 +84,42 @@ def list_episodes_for_shows(shows, max_episodes=5):
 
         console.print(table)
 
-
 def main():
     parser = argparse.ArgumentParser(description="🎧 Spotify Podcast Explorer CLI")
-    parser.add_argument("search", help="Mot-clé de recherche principal (ex: 'vin')")
-    parser.add_argument("--include", nargs='*', help="Mots-clés obligatoires dans le titre ou la description")
-    parser.add_argument("--exclude", nargs='*', help="Mots-clés interdits dans le titre ou la description")
+    parser.add_argument("search", help="Mot-clé principal pour la recherche globale (dans Spotify)")
+    
+    # Nouveaux arguments : filtres par champ
+    parser.add_argument("--title-include", nargs='*', help="Mots-clés à inclure dans le titre")
+    parser.add_argument("--title-exclude", nargs='*', help="Mots-clés à exclure du titre")
+    parser.add_argument("--desc-include", nargs='*', help="Mots-clés à inclure dans la description")
+    parser.add_argument("--desc-exclude", nargs='*', help="Mots-clés à exclure de la description")
+    
+    # Options existantes
     parser.add_argument("--episodes", action="store_true", help="Afficher les épisodes pour chaque podcast")
     parser.add_argument("--limit", type=int, default=10, help="Nombre maximum de résultats à explorer")
     parser.add_argument("--max-episodes", type=int, default=5, help="Nombre maximum d'épisodes à afficher")
 
     args = parser.parse_args()
 
-    include_keywords = [kw.lower() for kw in args.include] if args.include else []
-    exclude_keywords = [kw.lower() for kw in args.exclude] if args.exclude else []
+    # Nettoyage des mots-clés (lowercase)
+    title_include = [kw.lower() for kw in args.title_include] if args.title_include else []
+    title_exclude = [kw.lower() for kw in args.title_exclude] if args.title_exclude else []
+    desc_include = [kw.lower() for kw in args.desc_include] if args.desc_include else []
+    desc_exclude = [kw.lower() for kw in args.desc_exclude] if args.desc_exclude else []
 
-    shows = search_podcast(args.search, include=include_keywords, exclude=exclude_keywords, limit=args.limit)
+    # Recherche et affichage des podcasts
+    shows = search_podcast(
+        query=args.search,
+        title_include=title_include,
+        title_exclude=title_exclude,
+        desc_include=desc_include,
+        desc_exclude=desc_exclude,
+        limit=args.limit
+    )
 
+    # Affichage des épisodes si demandé
     if args.episodes and shows:
         list_episodes_for_shows(shows, max_episodes=args.max_episodes)
-
 
 if __name__ == "__main__":
     main()
