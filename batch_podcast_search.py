@@ -7,28 +7,56 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+import pathlib
 
 # --- CONFIGURATION ---
 
+# 🔍 Mots-clés de recherche
 search_terms = [
-    "natural wine",
-    "organic wine",
-    "vin nature",
-    "vin bio",
-    "oenologie"
+    "how",
+    "what",
+    "why",
+    "where",
+    "when",
+    "who",
+    "can",
+    "should",
+    "would",
+    "is",
+    "are",
+    "do",
+    "does",
+    "did",
+    "have",
+    "will",
+    "could",
+    "ever",
+    "guess",
+    "want",
+    "ready",
+    "dare",
+    "stop",
+    "secret",
+    "happen",
+    "far",
+    "deep",
+    "more",
+    "tell"
 ]
 
+# 🎯 Filtres à appliquer
 filters = {
-    "title_include": ["wine", "vin"],
+    "title_include": [],
     "title_exclude": [],
     "desc_include": [],
     "desc_exclude": [],
-    "lang": ["fr", "en"],
-    "explicit": None,
+    "lang": ["en"],
+    "explicit": True,  # True / False / None
     "min_episodes": 5,
-    "max_episodes": None,
+    "max_episodes": 20,
     "market": "FR",
-    "episodes_to_show": 3
+    "episodes_to_show": 3,
+    "only_questions": True  # ou False si désactivé
 }
 
 # --- INITIALISATION ---
@@ -43,8 +71,6 @@ sp = spotipy.Spotify(
 
 console = Console()
 log_file = open("batch.log", "w", encoding="utf-8")
-raw_results = []
-filtered_results = []
 
 def log(msg):
     timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
@@ -53,6 +79,16 @@ def log(msg):
     console.log(msg)
 
 # --- FONCTIONS ---
+
+def load_existing_json(filepath):
+    if pathlib.Path(filepath).exists():
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+raw_results = load_existing_json("raw_results.json")
+filtered_results = load_existing_json("filtered_results.json")
+seen_ids = set(item["show"]["id"] for item in filtered_results)
 
 def match_filters(show, filters):
     title = show['name'].lower()
@@ -76,6 +112,8 @@ def match_filters(show, filters):
     if filters["min_episodes"] and total_eps < filters["min_episodes"]:
         return False
     if filters["max_episodes"] and total_eps > filters["max_episodes"]:
+        return False
+    if filters.get("only_questions") and not title.strip().endswith("?"):
         return False
 
     return True
@@ -113,7 +151,6 @@ def show_podcast(podcast, episodes):
         for ep in episodes:
             table.add_row(ep['name'], ep['release_date'])
         console.print(table)
-
 
 # --- TRAITEMENT ---
 

@@ -2,3 +2,12 @@
 .cache
 .cache
 batch_podcast_search.py
+batch.log
+raw_results.json
+filtered_results.json
+2-raw_results.json
+2-filtered_results.json
+.DS_Store
+.cache
+*.log
+*.json
