@@ -1,4 +1,3 @@
-```markdown
 # 🎧 Spotify Podcast CLI
 
 Une application en ligne de commande pour explorer les podcasts Spotify selon des critères avancés : mots-clés, langues, titres, descriptions et épisodes. Le tout avec un affichage enrichi grâce à `rich`.
