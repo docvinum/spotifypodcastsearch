@@ -1,17 +1,16 @@
 import os
 import time
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-import pathlib
 
 # --- CONFIGURATION ---
 
-# 🔍 Mots-clés de recherche
 search_terms = [
     "how",
     "what",
@@ -37,29 +36,26 @@ search_terms = [
     "dare",
     "stop",
     "secret",
-    "happen",
-    "far",
-    "deep",
-    "more",
-    "tell"
+    "happen"
 ]
 
-# 🎯 Filtres à appliquer
 filters = {
     "title_include": [],
     "title_exclude": [],
     "desc_include": [],
     "desc_exclude": [],
     "lang": ["en"],
-    "explicit": True,  # True / False / None
-    "min_episodes": 5,
-    "max_episodes": 20,
+    "explicit": True,
+    "min_episodes": 4,
+    "max_episodes": 6,
+    "only_questions": True,
+    "last_episode_after": "2025-03-30",
+    "last_episode_before": "2025-04-01",
     "market": "FR",
-    "episodes_to_show": 3,
-    "only_questions": True  # ou False si désactivé
+    "episodes_to_show": 3
 }
 
-# --- INITIALISATION ---
+# --- INIT ---
 
 load_dotenv()
 sp = spotipy.Spotify(
@@ -70,27 +66,24 @@ sp = spotipy.Spotify(
 )
 
 console = Console()
-log_file = open("batch.log", "w", encoding="utf-8")
+raw_results = []
+filtered_results = []
 
-def log(msg):
-    timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
-    log_file.write(f"{timestamp} {msg}\n")
-    log_file.flush()
-    console.log(msg)
+# --- OUTILS ---
 
-# --- FONCTIONS ---
+def parse_date(date_str):
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except:
+        return None
 
-def load_existing_json(filepath):
-    if pathlib.Path(filepath).exists():
-        with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
+def get_last_episode_date(episodes):
+    dates = [ep.get("release_date") for ep in episodes if ep.get("release_date")]
+    if not dates:
+        return None
+    return max(dates)
 
-raw_results = load_existing_json("raw_results.json")
-filtered_results = load_existing_json("filtered_results.json")
-seen_ids = set(item["show"]["id"] for item in filtered_results)
-
-def match_filters(show, filters):
+def match_filters(show, filters, episodes, last_episode_date):
     title = show['name'].lower()
     description = show['description'].lower()
     languages = [l.lower() for l in show.get("languages", [])]
@@ -116,59 +109,53 @@ def match_filters(show, filters):
     if filters.get("only_questions") and not title.strip().endswith("?"):
         return False
 
-    return True
+    if filters.get("last_episode_after"):
+        min_date = parse_date(filters["last_episode_after"])
+        if not last_episode_date or parse_date(last_episode_date) < min_date:
+            return False
+    if filters.get("last_episode_before"):
+        max_date = parse_date(filters["last_episode_before"])
+        if not last_episode_date or parse_date(last_episode_date) > max_date:
+            return False
 
+    return True
 
 def fetch_episodes(show_id, max_episodes):
     try:
         results = sp.show_episodes(show_id, limit=max_episodes)
         episodes = results.get("items", [])
-        log(f"↳ {len(episodes)} épisode(s) récupéré(s) pour {show_id}")
-        return [ep for ep in episodes if ep and 'name' in ep and 'release_date' in ep]
+        return [ep for ep in episodes if ep.get("name") and ep.get("release_date")]
     except Exception as e:
-        log(f"Erreur récupération épisodes pour {show_id} : {e}")
+        console.log(f"[red]Erreur pour les épisodes de {show_id} : {e}[/red]")
         return []
 
-
-def show_podcast(podcast, episodes):
-    description = podcast['description'][:200] + "..."
+def show_podcast(show, episodes):
+    last_date = get_last_episode_date(episodes)
+    description = show['description'][:200] + "..."
     panel = Panel.fit(
-        f"[bold yellow]{podcast['name']}[/bold yellow]\n"
-        f"[green]Publisher:[/green] {podcast['publisher']}\n"
-        f"[cyan]Langues:[/cyan] {', '.join(podcast.get('languages', []))}\n"
-        f"[cyan]Episodes:[/cyan] {podcast['total_episodes']} | Explicite: {podcast['explicit']}\n\n"
+        f"[bold yellow]{show['name']}[/bold yellow]\n"
+        f"[green]Publisher:[/green] {show['publisher']}\n"
+        f"[cyan]Langues:[/cyan] {', '.join(show.get('languages', []))}\n"
+        f"[cyan]Episodes:[/cyan] {show['total_episodes']} | Explicite: {show['explicit']}\n"
+        f"[cyan]Dernier épisode :[/cyan] {last_date or 'N/A'}\n\n"
         f"{description}\n\n"
-        f"[blue]{podcast['external_urls']['spotify']}[/blue]",
+        f"[blue]{show['external_urls']['spotify']}[/blue]",
         title="🎙️ Podcast",
         border_style="magenta"
     )
     console.print(panel)
 
-    if episodes:
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Titre", style="bold", width=60)
-        table.add_column("Date", style="dim")
-        for ep in episodes:
-            table.add_row(ep['name'], ep['release_date'])
-        console.print(table)
-
 # --- TRAITEMENT ---
 
 seen_ids = set()
-total_found = 0
 
 for term in search_terms:
     console.rule(f"[bold green]🔍 Recherche : {term}[/bold green]")
-    log(f"Recherche : {term}")
-    found_for_term = 0
 
     for offset in range(0, 1000, 50):
         try:
-            log(f"  → Offset {offset}")
             results = sp.search(q=term, type='show', limit=50, offset=offset, market=filters["market"])
             shows = results.get('shows', {}).get('items', [])
-            log(f"  → {len(shows)} shows reçus")
-
             if not shows:
                 break
 
@@ -177,28 +164,23 @@ for term in search_terms:
             for show in shows:
                 if show['id'] in seen_ids:
                     continue
-                if match_filters(show, filters):
-                    episodes = fetch_episodes(show['id'], filters["episodes_to_show"])
+
+                episodes = fetch_episodes(show['id'], filters["episodes_to_show"])
+                last_date = get_last_episode_date(episodes)
+
+                if match_filters(show, filters, episodes, last_date):
                     show_podcast(show, episodes)
                     filtered_results.append({
                         "show": show,
                         "episodes": episodes
                     })
                     seen_ids.add(show['id'])
-                    found_for_term += 1
 
-            time.sleep(0.2)
+                time.sleep(0.2)  # Évite le throttling
 
         except Exception as e:
-            log(f"Erreur à l’offset {offset} pour '{term}' : {e}")
+            console.print(f"[red]Erreur à l’offset {offset} pour '{term}' : {e}[/red]")
             break
-
-    if found_for_term == 0:
-        log(f"⚠ Aucun résultat filtré pour '{term}'")
-
-    total_found += found_for_term
-
-log_file.close()
 
 # --- EXPORT FINAL ---
 
@@ -208,8 +190,7 @@ with open("raw_results.json", "w", encoding="utf-8") as f:
 with open("filtered_results.json", "w", encoding="utf-8") as f:
     json.dump(filtered_results, f, ensure_ascii=False, indent=2)
 
-console.rule(f"[bold blue]✅ Total podcasts filtrés : {total_found}[/bold blue]")
-console.print("[green]Les résultats ont été enregistrés dans :[/green]")
-console.print(" - [blue]batch.log[/blue] (log détaillé)")
-console.print(" - [blue]raw_results.json[/blue] (tous les résultats)")
-console.print(" - [blue]filtered_results.json[/blue] (podcasts filtrés + épisodes)")
+console.rule(f"[bold blue]✅ Total podcasts filtrés : {len(filtered_results)}[/bold blue]")
+console.print("[green]Résultats exportés dans :[/green]")
+console.print(" - [blue]raw_results.json[/blue]")
+console.print(" - [blue]filtered_results.json[/blue]")

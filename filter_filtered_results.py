@@ -1,58 +1,46 @@
 import json
-import time
 from datetime import datetime
-from dotenv import load_dotenv
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 
 # --- CONFIGURATION DES FILTRES ---
 
 filters = {
-    "title_include": [],
-    "title_exclude": ["wine"],
+    "title_include": ["wine", "vin"],
+    "title_exclude": [],
     "desc_include": [],
     "desc_exclude": [],
-    "lang": ["fr", "en"],
+    "lang": ["en"],
     "explicit": True,
-    "min_episodes": 4,
-    "max_episodes": 6,
+    "min_episodes": 5,
+    "max_episodes": 20,
     "only_questions": True,
-    "last_episode_after": "2025-03-30",   # YYYY-MM-DD
-    "last_episode_before": "2025-04-01"
+    "last_episode_after": "2025-01-01",   # YYYY-MM-DD
+    "last_episode_before": "2025-03-31"
 }
-
-# --- INITIALISATION API & CONSOLE ---
-
-load_dotenv()
-sp = spotipy.Spotify(
-    auth_manager=SpotifyClientCredentials()
-)
-console = Console()
 
 # --- OUTILS ---
 
 def parse_date(date_str):
     try:
         return datetime.strptime(date_str, "%Y-%m-%d")
-    except:
+    except Exception:
         return None
 
-def get_last_episode_date(show_id):
-    try:
-        episodes = sp.show_episodes(show_id, limit=50)['items']
-        dates = [ep.get("release_date") for ep in episodes if ep.get("release_date")]
-        if not dates:
-            return None
-        return max(dates)
-    except Exception as e:
-        console.log(f"[red]Erreur récupération épisodes pour {show_id} : {e}[/red]")
+def get_last_episode_date(episodes):
+    dates = [ep.get("release_date") for ep in episodes if ep.get("release_date")]
+    if not dates:
         return None
+    latest_str = max(dates)
+    return parse_date(latest_str)
 
-# --- FILTRAGE ---
+# --- FILTRE PRINCIPAL ---
 
-def match_filters(show, filters, last_episode_date=None):
+def match_filters(entry, filters):
+    show = entry["show"]
+    episodes = entry.get("episodes", [])
+
     title = show['name'].lower()
     description = show['description'].lower()
     languages = [l.lower() for l in show.get("languages", [])]
@@ -78,28 +66,32 @@ def match_filters(show, filters, last_episode_date=None):
     if filters.get("only_questions") and not title.strip().endswith("?"):
         return False
 
-    # Appliquer le filtre sur la date du dernier épisode
+    latest_date = get_last_episode_date(episodes)
     if filters.get("last_episode_after"):
         min_date = parse_date(filters["last_episode_after"])
-        if not last_episode_date or parse_date(last_episode_date) < min_date:
+        if not latest_date or latest_date < min_date:
             return False
     if filters.get("last_episode_before"):
         max_date = parse_date(filters["last_episode_before"])
-        if not last_episode_date or parse_date(last_episode_date) > max_date:
+        if not latest_date or latest_date > max_date:
             return False
 
     return True
 
 # --- AFFICHAGE ---
 
-def show_podcast(show, last_date=None):
+def show_podcast(entry):
+    show = entry["show"]
+    episodes = entry.get("episodes", [])
+
+    last_date = max((ep["release_date"] for ep in episodes if ep.get("release_date")), default="N/A")
     description = show['description'][:200] + "..."
     panel = Panel.fit(
         f"[bold yellow]{show['name']}[/bold yellow]\n"
         f"[green]Publisher:[/green] {show['publisher']}\n"
         f"[cyan]Langues:[/cyan] {', '.join(show.get('languages', []))}\n"
         f"[cyan]Episodes:[/cyan] {show['total_episodes']} | Explicite: {show['explicit']}\n"
-        f"[cyan]Dernier épisode :[/cyan] {last_date or 'N/A'}\n\n"
+        f"[cyan]Dernier épisode :[/cyan] {last_date}\n\n"
         f"{description}\n\n"
         f"[blue]{show['external_urls']['spotify']}[/blue]",
         title="🎙️ Podcast",
@@ -109,30 +101,25 @@ def show_podcast(show, last_date=None):
 
 # --- TRAITEMENT ---
 
+console = Console()
+
 try:
-    with open("raw_results.json", "r", encoding="utf-8") as f:
-        raw_results = json.load(f)
+    with open("filtered_results.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
 except FileNotFoundError:
-    console.print("[bold red]Fichier 'raw_results.json' introuvable.[/bold red]")
+    console.print("[bold red]Fichier 'filtered_results.json' introuvable.[/bold red]")
     exit(1)
 
-filtered = []
-console.print(f"🔍 Chargement de {len(raw_results)} podcasts depuis raw_results.json...")
+filtered = [entry for entry in data if match_filters(entry, filters)]
 
-for i, show in enumerate(raw_results, 1):
-    show_id = show['id']
-    console.log(f"({i}/{len(raw_results)}) Vérification : {show['name']}")
-    last_date = get_last_episode_date(show_id)
-    if match_filters(show, filters, last_episode_date=last_date):
-        show_podcast(show, last_date)
-        show["last_episode_date"] = last_date
-        filtered.append(show)
-    time.sleep(0.2)  # pour éviter les erreurs d’API
+console.rule(f"[bold green]🎯 {len(filtered)} podcasts filtrés sur {len(data)}[/bold green]")
+
+for entry in filtered:
+    show_podcast(entry)
 
 # --- EXPORT FINAL ---
 
-with open("filtered_from_raw.json", "w", encoding="utf-8") as f:
+with open("filtered_from_filtered.json", "w", encoding="utf-8") as f:
     json.dump(filtered, f, ensure_ascii=False, indent=2)
 
-console.rule(f"[bold green]🎯 {len(filtered)} podcasts filtrés sur {len(raw_results)}[/bold green]")
-console.print("[green]Résultats exportés dans :[/green] [blue]filtered_from_raw.json[/blue]")
+console.print("[green]Résultats exportés dans :[/green] [blue]filtered_from_filtered.json[/blue]")
